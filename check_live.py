@@ -6,11 +6,11 @@ import urllib.request
 from pathlib import Path
 
 YT_API_KEY = os.environ["YOUTUBE_API_KEY"]
-YT_CHANNEL_ID = os.environ["YOUTUBE_CHANNEL_ID"]  # starts with "UC"
+# One or more channel IDs (each starts with "UC"), separated by commas
+YT_CHANNEL_IDS = [c.strip() for c in os.environ["YOUTUBE_CHANNEL_ID"].split(",") if c.strip()]
 WEBHOOK_URL = os.environ["DISCORD_WEBHOOK_URL"]
 PING = os.environ.get("PING_ROLE_ID", "").strip()  # role ID, or the word "everyone"
 
-UPLOADS_PLAYLIST = "UU" + YT_CHANNEL_ID[2:]
 API = "https://www.googleapis.com/youtube/v3"
 SEEN_FILE = Path("announced.json")
 HEADERS = {"User-Agent": "yt-live-discord-bot (github actions)"}
@@ -29,10 +29,11 @@ def load_seen():
         return []
 
 
-def get_live_videos():
+def get_live_videos(channel_id):
+    playlist = "UU" + channel_id[2:]
     items = get_json(
         f"{API}/playlistItems",
-        {"part": "contentDetails", "playlistId": UPLOADS_PLAYLIST, "maxResults": 5, "key": YT_API_KEY},
+        {"part": "contentDetails", "playlistId": playlist, "maxResults": 5, "key": YT_API_KEY},
     ).get("items", [])
     ids = [i["contentDetails"]["videoId"] for i in items]
     if not ids:
@@ -76,28 +77,40 @@ def post_to_discord(video):
 
 def main():
     seen = load_seen()
-    live = get_live_videos()
     changed = False
+    errors = 0
 
-    for v in live:
-        if v["id"] in seen:
+    for channel_id in YT_CHANNEL_IDS:
+        try:
+            live = get_live_videos(channel_id)
+        except Exception as e:
+            print(f"Error checking {channel_id}: {e}", file=sys.stderr)
+            errors += 1
             continue
-        post_to_discord(v)  # if this fails, the script errors and the stream is retried next run
-        seen.append(v["id"])
-        changed = True
-        print(f"Announced {v['id']}")
+
+        if not live:
+            print(f"{channel_id}: not live.")
+            continue
+
+        for v in live:
+            if v["id"] in seen:
+                print(f"{channel_id}: already announced {v['id']}.")
+                continue
+            try:
+                post_to_discord(v)
+            except Exception as e:
+                print(f"Error posting {v['id']}: {e}", file=sys.stderr)
+                errors += 1
+                continue
+            seen.append(v["id"])
+            changed = True
+            print(f"Announced {v['id']}")
 
     if changed:
         SEEN_FILE.write_text(json.dumps(seen[-200:]))
-    elif not live:
-        print("Not live.")
-    else:
-        print("Already announced.")
+    if errors:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+    main()
