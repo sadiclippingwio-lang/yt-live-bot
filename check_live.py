@@ -49,8 +49,14 @@ def post_to_discord(video):
     thumb = (thumbs.get("maxres") or thumbs.get("high") or thumbs.get("default") or {}).get("url")
 
     ping = ""
-    if PING:
-        ping = "@everyone " if PING.lower() == "everyone" else f"<@&{PING}> "
+    for p in PING.split(","):
+        p = p.strip()
+        if not p:
+            continue
+        if p.lower() in ("everyone", "here"):
+            ping += f"@{p.lower()} "
+        else:
+            ping += f"<@&{p}> "
 
     embed = {
         "title": snip["title"],
